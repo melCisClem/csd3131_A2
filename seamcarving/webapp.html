@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seam carving</title>
+<style>
+  :root {
+    --page: #f4f2ee; --card: #ffffff; --ink: #1d1f23; --muted: #666b73;
+    --line: #d9d5cc; --frame: #e6e3dc; --accent: #c2410c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --page: #17181b; --card: #212327; --ink: #ecebe7; --muted: #9a9ea6;
+            --line: #34373d; --frame: #2b2d32; --accent: #fb923c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 22px; margin: 0 0 2px; text-wrap: balance; }
+  p.lead { margin: 0 0 16px; color: var(--muted); }
+
+  .controls { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+              padding: 14px 16px; display: grid; gap: 10px; }
+  .slider-row { display: grid; grid-template-columns: 60px 1fr 56px; align-items: center; gap: 10px; }
+  .slider-row output { text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
+  button, .file-button { font: inherit; color: var(--ink); background: var(--page);
+           border: 1px solid var(--line); border-radius: 7px; padding: 6px 14px; cursor: pointer; }
+  button:hover, .file-button:hover { border-color: var(--accent); }
+  button:focus-visible, .file-button:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .file-button input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  label.check { display: flex; align-items: center; gap: 6px; margin-left: 6px; }
+  #status { margin: 12px 2px; color: var(--muted); font-variant-numeric: tabular-nums; min-height: 1.45em; }
+
+  .panels { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  @media (max-width: 640px) { .panels { grid-template-columns: 1fr; } }
+  figure { margin: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+  figcaption { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  /* The frame keeps the ORIGINAL image's shape; the picture shrinks inside it. */
+  .frame { background: var(--frame); aspect-ratio: 3 / 2; overflow: hidden; }
+  .frame img { display: block; image-rendering: pixelated; }
+  .key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 3px 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Seam carving</h1>
+  <p class="lead">Drag the sliders. Seams are found by dynamic programming and removed one at a time.</p>
+
+  <section class="controls">
+    <div class="slider-row"><label for="width">Width</label>
+      <input id="width" type="range" min="1" max="1" value="1"><output id="widthValue"></output></div>
+    <div class="slider-row"><label for="height">Height</label>
+      <input id="height" type="range" min="1" max="1" value="1"><output id="heightValue"></output></div>
+    <div class="slider-row"><label for="speed">Speed</label>
+      <input id="speed" type="range" min="1" max="20" value="1"><output id="speedValue"></output></div>
+    <div class="buttons">
+      <button id="play">Pause</button>
+      <button id="step">Step</button>
+      <button id="reset">Reset</button>
+      <label class="file-button">Upload image<input id="upload" type="file" accept="image/*"></label>
+      <button id="save">Save result</button>
+      <label class="check"><input id="forward" type="checkbox"> Forward energy</label>
+    </div>
+  </section>
+
+  <div id="status">Loading…</div>
+
+  <section class="panels">
+    <figure><figcaption>Seam carving
+        <span class="key" style="background:#f00"></span>removing
+        <span class="key" style="background:#00dc00"></span>putting back</figcaption>
+      <div class="frame"><img id="carved" alt="Carved image with the current seam"></div></figure>
+    <figure><figcaption>Energy map of the carved image (bright = important)</figcaption>
+      <div class="frame"><img id="energy" alt="Energy map with the current seam"></div></figure>
+    <figure><figcaption>Original with every removed seam
+        <span class="key" style="background:#f00"></span>vertical
+        <span class="key" style="background:#006eff"></span>horizontal</figcaption>
+      <div class="frame"><img id="seams" alt="Original image with all removed seams"></div></figure>
+    <figure><figcaption>Plain scaling to the same size, for comparison</figcaption>
+      <div class="frame"><img id="scaled" alt="Original image scaled without seam carving"></div></figure>
+  </section>
+</main>
+
+<script>
+// The page does no carving. It only tells the Python server what size the
+// sliders ask for, and shows the pictures the server sends back.
+const byId = (id) => document.getElementById(id);
+const widthSlider = byId("width"), heightSlider = byId("height"), speedSlider = byId("speed");
+const panelNames = ["carved", "energy", "seams", "scaled"];
+
+let playing = true;          // false = paused (Step still works)
+let needsWork = true;        // true while the picture is not yet at the slider size
+let waiting = false;         // true while a request to the server is in flight
+let loadedOriginal = "";     // "WxH" of the image the sliders are set up for
+
+function showSliderValues() {
+  byId("widthValue").textContent = widthSlider.value;
+  byId("heightValue").textContent = heightSlider.value;
+  byId("speedValue").textContent = speedSlider.value;
+}
+
+// Ask the server for up to `count` seams towards the slider size, then draw the answer.
+async function advance(count) {
+  if (waiting) return;       // never send two requests at once
+  waiting = true;
+  try {
+    const haveImage = loadedOriginal !== "";
+    const size = haveImage ? `width=${widthSlider.value}&height=${heightSlider.value}&` : "";
+    const response = await fetch(`/step?${size}count=${count}`);
+    show(await response.json());
+  } catch (error) {
+    byId("status").textContent = "Lost contact with the Python server. Is it still running?";
+  } finally {
+    waiting = false;
+  }
+}
+
+function show(state) {
+  if (state.empty) {
+    byId("status").textContent = "No image yet. Use “Upload image” to choose one.";
+    needsWork = false;
+    return;
+  }
+  const [originalWidth, originalHeight] = state.original;
+  const [width, height] = state.size;
+
+  // First answer for this image: set the sliders up for its size.
+  if (loadedOriginal !== `${originalWidth}x${originalHeight}`) {
+    loadedOriginal = `${originalWidth}x${originalHeight}`;
+    widthSlider.max = originalWidth;   widthSlider.value = width;
+    heightSlider.max = originalHeight; heightSlider.value = height;
+    byId("forward").checked = state.forward;
+    showSliderValues();
+  }
+
+  for (const name of panelNames) {
+    const picture = byId(name);
+    const [pictureWidth, pictureHeight] = name === "seams" ? state.original : state.size;
+    picture.parentElement.style.aspectRatio = `${originalWidth} / ${originalHeight}`;
+    picture.style.width = `${100 * pictureWidth / originalWidth}%`;     // share of the frame it fills
+    picture.style.height = `${100 * pictureHeight / originalHeight}%`;
+    picture.src = state.panels[name];
+  }
+  byId("status").textContent =
+    `${originalWidth}×${originalHeight} → ${width}×${height}   ·   removed ${state.vertical} vertical, ` +
+    `${state.horizontal} horizontal seams   ·   DP with ${state.forward ? "forward" : "backward"} energy`;
+  needsWork = !state.done;
+}
+
+// The animation: about 30 times a second, if there is anything left to do.
+setInterval(() => { if (playing && needsWork) advance(Number(speedSlider.value)); }, 30);
+
+for (const slider of [widthSlider, heightSlider, speedSlider]) {
+  slider.addEventListener("input", () => { showSliderValues(); needsWork = true; });
+}
+
+byId("play").addEventListener("click", () => {
+  playing = !playing;
+  byId("play").textContent = playing ? "Pause" : "Play";
+});
+
+byId("step").addEventListener("click", () => advance(1));
+
+async function resetOnServer() {
+  await fetch(`/reset?forward=${byId("forward").checked ? 1 : 0}`, { method: "POST" });
+  needsWork = true;
+  if (!playing) advance(0);      // paused: still show the fresh image
+}
+
+byId("reset").addEventListener("click", () => {
+  widthSlider.value = widthSlider.max;       // sliders back to full size
+  heightSlider.value = heightSlider.max;
+  showSliderValues();
+  resetOnServer();
+});
+
+// Switching method starts over but leaves the sliders alone,
+// so the same resize is replayed with the other DP.
+byId("forward").addEventListener("change", resetOnServer);
+
+byId("upload").addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const response = await fetch("/upload", { method: "POST", body: file });
+  if (!response.ok) {
+    byId("status").textContent = (await response.json()).error;
+    return;
+  }
+  loadedOriginal = "";           // new image: sliders are set up again by the next answer
+  needsWork = true;
+  advance(0);
+  event.target.value = "";
+});
+
+byId("save").addEventListener("click", () => {
+  if (!byId("carved").src) return;
+  const link = document.createElement("a");
+  link.href = byId("carved").src;            // the picture is already a PNG in the page
+  link.download = "carved.png";
+  link.click();
+});
+
+showSliderValues();
+advance(0);                      // first picture
+</script>
+</body>
+</html>

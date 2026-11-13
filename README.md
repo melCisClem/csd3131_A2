@@ -68,6 +68,35 @@ python -m seamcarving surfer.png out2.png --width 920 --height 880 --forward
 
 Omitted dimensions are left unchanged. The current implementation only reduces image size.
 
+## Interactive Web App
+
+Resize an image with sliders and watch every seam being removed, one at a time. It needs no extra dependencies: the server is Python's built-in `http.server`, and all carving is done by the same DP code as the command line.
+
+```bash
+python -m seamcarving.webapp [image] [--forward] [--max-side 500] [--port 8000] [--no-browser]
+```
+
+The browser opens at http://localhost:8000. The image is optional; one can also be uploaded on the page. Images are first shrunk so the longer side is at most `--max-side` pixels, to keep the animation smooth. Press `Ctrl+C` in the terminal to stop.
+
+| Control | What it does |
+|---|---|
+| Width / Height | Target size. The image follows one seam at a time, width first and then height. Dragging back up restores seams in reverse order. |
+| Speed | Seams per animation frame (1 to 20). |
+| Pause / Play, Step | Stop or continue the animation; Step removes or restores exactly one seam. |
+| Reset | Back to the original image and full-size sliders. |
+| Upload image | Start again with another image. |
+| Save result | Download the carved image as `carved.png` (wait for the animation to finish, or the current seam is included). |
+| Forward energy | Switch DP method and replay the same resize from the original. |
+
+| Panel | Shows |
+|---|---|
+| Seam carving | The carved image. Red is the seam about to be removed, green a seam just put back. |
+| Energy map | Energy of the carved image (bright = important) with the same seam. |
+| Original with every removed seam | All seams removed so far: red = vertical, blue = horizontal. |
+| Plain scaling | The original scaled to the same size, for comparison. |
+
+How it works: the page (`webapp.html`) only has the controls and displays pictures. About 30 times a second it asks the server (`webapp.py`) to move a few seams closer to the slider size. The server owns one `CarveSession` (`interactive.py`), which carves an *index map* (which original pixel sits at each position) instead of the image itself. The current image, the set of all removed seams and undo all follow from that map.
+
 ## Project Structure
 
 ```
@@ -77,6 +106,9 @@ seamcarving/
 - forward.py    Forward-energy DP variant (optional improvement)
 - carve.py      Seam removal and the iterative resize loop
 - __main__.py   Command-line interface
+- interactive.py  Step-by-step carving session with undo (used by the web app)
+- webapp.py     Local web server for the interactive app
+- webapp.html   The web page: sliders, buttons and the four panels
 ```
 
 ## How It Works
