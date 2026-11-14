@@ -5,7 +5,7 @@ Content-aware image resizing using seam carving (Avidan & Shamir, 2007). The pro
 | Method | Approach | Status |
 |---|---|---|
 | Dynamic programming | Exact minimum-cost seam in O(H*W) | Implemented |
-| Greedy | Row-by-row local minimum | In progress |
+| Greedy | Row-by-row local minimum in O(H) | Implemented |
 | Graph cut | Min s t cut via max-flow | In progress |
 
 ## Requirements
@@ -42,10 +42,10 @@ Content-aware image resizing using seam carving (Avidan & Shamir, 2007). The pro
 ## Usage
 
 ```bash
-python -m seamcarving <input> <output> [--width W] [--height H] [--forward]
+python -m seamcarving <input> <output> [--width W] [--height H] [--forward | --greedy]
 ```
 
-`--forward` selects forward-energy DP (see [Forward energy](#forward-energy-improvement)), which reduces visual artifacts in textured regions but takes slightly longer.
+`--forward` selects forward-energy DP (see [Forward energy](#forward-energy-improvement)), which reduces visual artifacts in textured regions but takes slightly longer. `--greedy` selects the greedy seam (see [Greedy vs DP](#greedy-algorithm-vs-dynamic-programming)), which is faster but finds much worse seams.
 
 Test examples: 
 ```bash
@@ -65,6 +65,11 @@ python -m seamcarving castle.png out.png --width 250 --height 180 --forward
 python -m seamcarving surfer.png out2.png --width 920 --height 880 --forward
 ```
 1920x1079 -> 920x880 in 161.60s
+
+```bash
+python -m seamcarving castle.png out.png --width 250 --height 180 --greedy
+```
+341x229 -> 250x180 in 0.31s
 
 Omitted dimensions are left unchanged. The current implementation only reduces image size.
 
@@ -104,8 +109,10 @@ seamcarving/
 - energy.py     Energy map (Sobel gradient magnitude)
 - backward.py   Standard (backward-energy) DP: cumulative-cost table and minimum seam
 - forward.py    Forward-energy DP variant (optional improvement)
+- greedy.py     Greedy row-by-row seam (alternative to DP)
 - carve.py      Seam removal and the iterative resize loop
 - __main__.py   Command-line interface
+- compare.py    Greedy vs DP comparison: seams, visual quality, running time
 - interactive.py  Step-by-step carving session with undo (used by the web app)
 - webapp.py     Local web server for the interactive app
 - webapp.html   The web page: sliders, buttons and the four panels
@@ -139,6 +146,39 @@ M[i][j] = min(M[i-1][j-1] + cL, M[i-1][j] + cU, M[i-1][j+1] + cR)
 
 The DP structure and complexity are unchanged (O(H*W)). It needs the image rather than an energy map, so it is selected with `carve(..., forward=True)` or exposed directly as `find_vertical_seam_forward(img)`.
 
+## Greedy Algorithm vs Dynamic Programming
+
+The greedy seam (`greedy.py`) makes one local decision per row and never looks back:
+
+```
+seam[0] = argmin_j e[0][j]
+seam[i] = argmin over j in {seam[i-1]-1, seam[i-1], seam[i-1]+1} of e[i][j]
+```
+
+It starts at the cheapest pixel of the top row and steps down to the cheapest of the (up to) three pixels below. The search is O(W + H) time and O(H) space per seam, against O(H*W) time and space for the DP table. It is not optimal: a cheap pixel now can lead the seam into a wall of high energy later, and since the decision is never revisited the seam has to cut through it. The DP avoids this because `M[i][j]` already includes the best way to reach every pixel.
+
+Run the comparison with
+
+```bash
+python -m seamcarving.compare castle.png --width 250 --height 180
+```
+
+It writes images, a per-seam CSV and `summary.md` to `results/<image>/`. "Optimality gap" compares each greedy seam with the DP seam on the same image, so it isolates the greedy decision itself.
+
+Results (backward energy, same machine):
+
+| | castle 341x229 -> 250x180 (DP / Greedy) | surfer 1920x1079 -> 920x880 (DP / Greedy) |
+|---|---|---|
+| Whole carve | 0.64 s / 0.31 s (2.0x faster) | 134.1 s / 77.4 s (1.7x faster) |
+| Seam search only | 0.34 s / 0.02 s (19x faster) | 57.6 s / 1.7 s (33x faster) |
+| Total energy removed | 837,827 / 1,515,325 (1.81x) | 39.6M / 51.3M (1.30x) |
+| Greedy seam vs optimal on the same image | median 3.21x, worst 12.61x | median 3.06x, worst 7.59x |
+| Seams where greedy was optimal | 0 of 140 | 0 of 1199 |
+
+- **Seams.** The first greedy and DP seams share no rows on either image. DP seams bend around objects to stay in low-energy sky or water. Greedy seams follow whatever is cheapest right below them, so they drift straight down and cut through the castle towers and across the surfers.
+- **Visual quality.** Greedy is not comparable to DP. On castle the middle tower is visibly squeezed and the towers lose their shape; on surfer the left surfer is squashed and the board is distorted, while DP keeps both surfers intact.
+- **Running time.** The greedy search itself is 19-33x faster (O(H) instead of O(H*W) per seam), but the whole carve is only about 2x faster, because both methods spend the same time recomputing the Sobel energy map and removing the seam after every step. Those steps, not the seam search, are what dominate the greedy run.
+
 ## API Reference
 
 All functions are importable from the `seamcarving` package. A *vertical seam* is an integer array of length `H`, where `seam[i]` is the column removed in row `i`.
@@ -155,6 +195,8 @@ All functions are importable from the `seamcarving` package. A *vertical seam* i
 | `carve(img, new_w, new_h, seam_finder, on_seam, forward)` | Runs the full resize pipeline. `forward=True` uses forward-energy DP. |
 | `find_vertical_seam_forward(img)` | Minimum forward-energy vertical seam; takes the image, not an energy map. |
 | `forward_seam_cost(img, seam)` | Forward-energy cost of a seam (for comparisons and tests). |
+| `find_vertical_seam_greedy(energy)` | Greedy row-by-row vertical seam (from `greedy.py`). |
+| `find_horizontal_seam_greedy(energy)` | Greedy horizontal seam. |
 
 ### Adding a seam-finding method
 
@@ -192,7 +234,7 @@ pytest
 Model used: Claude Opus 5.5 and Claude Sonnet 5.5 both on High effort
 
 usage: 
-- 
+- Helped to plot the graph for comparison between DP and Greedy 
 - Checking through of code for bugs 
 
 ## Team

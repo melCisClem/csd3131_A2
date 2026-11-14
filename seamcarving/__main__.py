@@ -1,10 +1,11 @@
-"""Usage: python -m seamcarving in.png out.png --width desired_width --height desired_height [--forward]"""
+"""Usage: python -m seamcarving in.png out.png --width desired_width --height desired_height [--forward | --greedy]"""
 import argparse
 import sys
 import time
 
 import cv2
 
+from . import greedy
 from .carve import carve
 
 
@@ -16,7 +17,12 @@ def main() -> int:
     ap.add_argument("--height", type=int, help="target height (default: unchanged)")
     ap.add_argument("--forward", action="store_true",
                     help="use forward-energy DP (fewer artifacts)")
+    ap.add_argument("--greedy", action="store_true",
+                    help="use the greedy row-by-row seam instead of DP (faster, worse seams)")
     args = ap.parse_args()
+    if args.forward and args.greedy:
+        print("error: choose either --forward or --greedy, not both", file=sys.stderr)
+        return 1
 
     img = cv2.imread(args.input)
     if img is None:
@@ -29,7 +35,10 @@ def main() -> int:
 
     t0 = time.perf_counter()
     try:
-        out = carve(img, w, h, forward=args.forward)
+        if args.greedy:
+            out = carve(img, w, h, seam_finder=greedy.find_vertical_seam)
+        else:
+            out = carve(img, w, h, forward=args.forward)
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
