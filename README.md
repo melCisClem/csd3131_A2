@@ -6,7 +6,7 @@ Content-aware image resizing using seam carving (Avidan & Shamir, 2007). The pro
 |---|---|---|
 | Dynamic programming | Exact minimum-cost seam in O(H*W) | Implemented |
 | Greedy | Row-by-row local minimum in O(H) | Implemented |
-| Graph cut | Min s t cut via max-flow | In progress |
+| Graph cut | Min s-t cut via max-flow (Edmonds-Karp) | Implemented |
 
 ## Requirements
 
@@ -42,10 +42,10 @@ Content-aware image resizing using seam carving (Avidan & Shamir, 2007). The pro
 ## Usage
 
 ```bash
-python -m seamcarving <input> <output> [--width W] [--height H] [--forward | --greedy]
+python -m seamcarving <input> <output> [--width W] [--height H] [--forward | --greedy | --graphcut]
 ```
 
-`--forward` selects forward-energy DP (see [Forward energy](#forward-energy-improvement)), which reduces visual artifacts in textured regions but takes slightly longer. `--greedy` selects the greedy seam (see [Greedy vs DP](#greedy-algorithm-vs-dynamic-programming)), which is faster but finds much worse seams.
+`--forward` selects forward-energy DP (see [Forward energy](#forward-energy-improvement)), which reduces visual artifacts in textured regions but takes slightly longer. `--greedy` selects the greedy seam (see [Greedy vs DP](#greedy-algorithm-vs-dynamic-programming)), which is faster but finds much worse seams. `--graphcut` finds seams by min-cut/max-flow (see [Graph cut vs DP](#graph-cut-vs-dynamic-programming)): the same seams as DP, but thousands of times slower, so use it on small images only.
 
 Test examples: 
 ```bash
@@ -110,9 +110,11 @@ seamcarving/
 - backward.py   Standard (backward-energy) DP: cumulative-cost table and minimum seam
 - forward.py    Forward-energy DP variant (optional improvement)
 - greedy.py     Greedy row-by-row seam (alternative to DP)
+- graphcut.py   Min-cut / max-flow seam (Edmonds-Karp, alternative to DP)
 - carve.py      Seam removal and the iterative resize loop
 - __main__.py   Command-line interface
 - compare.py    Greedy vs DP comparison: seams, visual quality, running time
+- compare_graphcut.py  Graph cut vs DP comparison: seams, visual quality, running time
 - interactive.py  Step-by-step carving session with undo (used by the web app)
 - webapp.py     Local web server for the interactive app
 - webapp.html   The web page: sliders, buttons and the four panels
@@ -179,6 +181,47 @@ Results (backward energy, same machine):
 - **Visual quality.** Greedy is not comparable to DP. On castle the middle tower is visibly squeezed and the towers lose their shape; on surfer the left surfer is squashed and the board is distorted, while DP keeps both surfers intact.
 - **Running time.** The greedy search itself is 19-33x faster (O(H) instead of O(H*W) per seam), but the whole carve is only about 2x faster, because both methods spend the same time recomputing the Sobel energy map and removing the seam after every step. Those steps, not the seam search, are what dominate the greedy run.
 
+## Graph Cut vs Dynamic Programming
+
+`graphcut.py` finds the seam as a minimum s-t cut. Each pixel is a node in a flow network:
+
+| Edge | Capacity | Purpose |
+|---|---|---|
+| source -> `(i, 0)` | inf | The left column is always on the source side |
+| `(i, j)` -> `(i, j+1)`, and `(i, W-1)` -> sink | `e[i][j]` | Cutting this edge removes pixel `(i, j)` |
+| `(i, j+1)` -> `(i, j)` | inf | Each row is cut exactly once |
+| `(i, j)` -> `(i-1, j-1)` and `(i+1, j-1)` | inf | Cuts in neighbouring rows are at most 1 column apart (a connected seam) |
+
+A finite cut cannot cross an inf edge, so every finite cut is a vertical seam, and its capacity is the seam's total energy. Max-flow is computed with Edmonds-Karp (BFS shortest augmenting paths). The source side S is everything still reachable from the source in the residual graph, and the seam pixel in each row is the rightmost pixel of S. The last column is joined to the sink with capacity `e[i][W-1]` rather than inf, so seams can use the last column, as they can in DP. With that change the minimum cut equals the DP minimum exactly.
+
+Run the comparison with
+
+```bash
+python -m seamcarving.compare_graphcut castle.png --scale 0.2 --width 52 --height 40
+```
+
+It shrinks the image first (`--scale`), because pure-Python max-flow takes minutes per seam at full size. It writes images, per-seam costs, a one-seam timing table at several sizes (`timing.csv`, `timing.png`) and `summary.md` to `results/<image>_graphcut/`.
+
+Results (castle shrunk to 68x46 -> 52x40, 22 seams):
+
+| | DP | Graph cut |
+|---|---|---|
+| Seam search, whole carve | 0.02 s | 20.4 s (about 900x slower) |
+| Graph-cut seam vs optimal DP seam on the same image | | 1.000x on all 22 seams |
+
+Time to find one seam:
+
+| Image | Nodes | Edges | Augmenting paths | DP | Graph cut | Slower by |
+|---|---|---|---|---|---|---|
+| 34x23 | 784 | 3,016 | 213 | 0.36 ms | 0.11 s | 300x |
+| 68x46 | 3,130 | 12,286 | 470 | 0.72 ms | 0.94 s | 1,300x |
+| 136x92 | 12,514 | 49,594 | 1,067 | 1.8 ms | 10.2 s | 5,700x |
+| 341x229 (full size) | 78,091 | 311,218 | not measured | 10 ms | ~400 s (one run, busy machine) | ~40,000x |
+
+- **Seams.** Every graph-cut seam has exactly the DP cost, and the max-flow value equals the seam cost (max-flow min-cut theorem). The seams themselves can differ where two seams tie: the first seams share 44 of 46 rows.
+- **Visual quality.** It is the same as DP. The carved images differ only where equal-cost seams broke ties differently.
+- **Running time.** DP is O(HW). The graph has V = HW + 2 nodes and E ~ 4HW edges, and every augmenting path costs a full O(V + E) BFS. The number of paths also grows with the image, so the gap widens with size. DP uses the fact that a seam goes down row by row. Max-flow is a general algorithm and cannot use that.
+
 ## API Reference
 
 All functions are importable from the `seamcarving` package. A *vertical seam* is an integer array of length `H`, where `seam[i]` is the column removed in row `i`.
@@ -197,6 +240,8 @@ All functions are importable from the `seamcarving` package. A *vertical seam* i
 | `forward_seam_cost(img, seam)` | Forward-energy cost of a seam (for comparisons and tests). |
 | `find_vertical_seam_greedy(energy)` | Greedy row-by-row vertical seam (from `greedy.py`). |
 | `find_horizontal_seam_greedy(energy)` | Greedy horizontal seam. |
+| `find_vertical_seam_graphcut(energy)` | Minimum-cost vertical seam by min-cut/max-flow (from `graphcut.py`). |
+| `find_horizontal_seam_graphcut(energy)` | Graph-cut horizontal seam. |
 
 ### Adding a seam-finding method
 

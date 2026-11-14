@@ -10,11 +10,15 @@ from .energy import compute_energy
 from .forward import find_vertical_seam_forward, forward_seam_cost
 from .greedy import find_horizontal_seam as find_horizontal_seam_greedy
 from .greedy import find_vertical_seam as find_vertical_seam_greedy
+from .graphcut import find_horizontal_seam as find_horizontal_seam_graphcut
+from .graphcut import find_vertical_seam as find_vertical_seam_graphcut
 
 __all__ = [
     "find_vertical_seam_forward",
     "find_vertical_seam_greedy",
     "find_horizontal_seam_greedy",
+    "find_vertical_seam_graphcut",
+    "find_horizontal_seam_graphcut",
     "forward_seam_cost",
     "carve",
     "compute_energy",
