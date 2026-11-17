@@ -11,7 +11,7 @@ Content-aware image resizing using seam carving (Avidan & Shamir, 2007). The pro
 ## Requirements
 
 - Python 3.10 or newer
-- Dependencies listed in [`requirements.txt`](requirements.txt) (NumPy, OpenCV, pytest)
+- Dependencies listed in [`requirements.txt`](requirements.txt) (NumPy, OpenCV, pytest, Matplotlib for the timing charts)
 
 ## Installation
 
@@ -115,6 +115,7 @@ seamcarving/
 - __main__.py   Command-line interface
 - compare.py    Greedy vs DP comparison: seams, visual quality, running time
 - compare_graphcut.py  Graph cut vs DP comparison: seams, visual quality, running time
+- benchmark.py  Running time of all three methods: charts and tables
 - interactive.py  Step-by-step carving session with undo (used by the web app)
 - webapp.py     Local web server for the interactive app
 - webapp.html   The web page: sliders, buttons and the four panels
@@ -222,6 +223,32 @@ Time to find one seam:
 - **Visual quality.** It is the same as DP. The carved images differ only where equal-cost seams broke ties differently.
 - **Running time.** DP is O(HW). The graph has V = HW + 2 nodes and E ~ 4HW edges, and every augmenting path costs a full O(V + E) BFS. The number of paths also grows with the image, so the gap widens with size. DP uses the fact that a seam goes down row by row. Max-flow is a general algorithm and cannot use that.
 
+## Running Time of All Three Methods
+
+```bash
+python -m seamcarving.benchmark castle.png
+```
+
+It writes two charts, their CSV files and `summary.md` to `results/benchmark/`. Graph cut is skipped on images above `--graphcut-max-pixels` (default 13,000), because one full-size seam takes minutes.
+
+![Time to find one seam](results/benchmark/timing_one_seam.png)
+
+Time to find one seam on castle.png (fastest of several runs, one machine):
+
+| Image | DP | Greedy | Graph cut |
+|---|---|---|---|
+| 34x23 | 286 us | 19 us | 63 ms (221x DP) |
+| 136x92 | 1.18 ms | 80 us | 8.5 s (7,190x DP) |
+| 341x229 | 4.3 ms | 203 us | not run |
+
+- **Graph cut** grows like pixels^1.76, so its gap to DP widens with every size.
+- **Greedy** grows like pixels^0.5: it only walks down H rows.
+- **DP** is O(H*W), but measures pixels^0.6 on castle and pixels^0.8 on the 1920x1079 surfer image. Each row is one vectorised NumPy step, so on small images the fixed cost of the H row steps dominates; the per-pixel work only shows on large images.
+
+![Where the time goes](results/benchmark/carve_breakdown.png)
+
+Inside the carve loop, the energy map and the seam removal cost the same whichever method is used. On castle the DP search is 48% of each step and the greedy search 5%, which is why a 20x faster search makes the whole carve less than 2x faster.
+
 ## API Reference
 
 All functions are importable from the `seamcarving` package. A *vertical seam* is an integer array of length `H`, where `seam[i]` is the column removed in row `i`.
@@ -266,6 +293,12 @@ Different methods may return different seams of equal cost, since ties are broke
 ```bash
 pytest
 ```
+
+321 tests. DP, forward DP and graph cut are checked against a brute-force search over every possible seam on small images; see [`report/testing_section.md`](report/testing_section.md) for what each test file proves.
+
+### Continuous integration
+
+[`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs the tests on every push and pull request, on Linux and Windows with Python 3.10 and 3.13. If they pass, a second job runs the benchmark and attaches the charts to the run as a downloadable artifact.
 
 ## References
 
