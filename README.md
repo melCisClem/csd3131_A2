@@ -165,21 +165,21 @@ Run the comparison with
 python -m seamcarving.compare castle.png --width 250 --height 180
 ```
 
-It writes images, a per-seam CSV and `summary.md` to `results/<image>/`. "Optimality gap" compares each greedy seam with the DP seam on the same image, so it isolates the greedy decision itself.
+It writes images, per-seam and timing CSVs and `summary.md` to `results/<image>_greedy/`. "Optimality gap" compares each greedy seam with the DP seam on the same image, so it isolates the greedy decision itself.
 
 Results (backward energy, same machine):
 
-| | castle 341x229 -> 250x180 (DP / Greedy) | surfer 1920x1079 -> 920x880 (DP / Greedy) |
+| | castle 341x229 -> 250x180 (DP / Greedy) | surfer 1920x1079 -> 250x180 (DP / Greedy) |
 |---|---|---|
-| Whole carve | 0.64 s / 0.31 s (2.0x faster) | 134.1 s / 77.4 s (1.7x faster) |
-| Seam search only | 0.34 s / 0.02 s (19x faster) | 57.6 s / 1.7 s (33x faster) |
-| Total energy removed | 837,827 / 1,515,325 (1.81x) | 39.6M / 51.3M (1.30x) |
-| Greedy seam vs optimal on the same image | median 3.21x, worst 12.61x | median 3.06x, worst 7.59x |
-| Seams where greedy was optimal | 0 of 140 | 0 of 1199 |
+| Whole carve | 0.64 s / 0.31 s (2.0x faster) | 261.1 s / 71.5 s (3.7x faster) |
+| Seam search only | 0.34 s / 0.02 s (19x faster) | 120.9 s / 1.2 s (98x faster) |
+| Total energy removed | 837,827 / 1,515,325 (1.81x) | 95.9M / 98.0M (1.02x) |
+| Greedy seam vs optimal on the same image | median 3.21x, worst 12.61x | median 2.86x, worst 7.59x |
+| Seams where greedy was optimal | 0 of 140 | 0 of 2569 |
 
 - **Seams.** The first greedy and DP seams share no rows on either image. DP seams bend around objects to stay in low-energy sky or water. Greedy seams follow whatever is cheapest right below them, so they drift straight down and cut through the castle towers and across the surfers.
-- **Visual quality.** Greedy is not comparable to DP. On castle the middle tower is visibly squeezed and the towers lose their shape; on surfer the left surfer is squashed and the board is distorted, while DP keeps both surfers intact.
-- **Running time.** The greedy search itself is 19-33x faster (O(H) instead of O(H*W) per seam), but the whole carve is only about 2x faster, because both methods spend the same time recomputing the Sobel energy map and removing the seam after every step. Those steps, not the seam search, are what dominate the greedy run.
+- **Visual quality.** Greedy is not comparable to DP. On castle the middle tower is visibly squeezed and the towers lose their shape; on surfer greedy cuts through the left surfer, who is almost entirely lost, while DP keeps both surfers intact. The surfer reduction removes about 87% of the width and 83% of the height, so both results are heavily distorted; the total energy removed is almost equal (1.02x) because at that point both methods have to remove nearly everything, so the per-seam comparison is the fairer measure.
+- **Running time.** The greedy search itself is 19-98x faster (O(H + W) instead of O(H*W) per seam), but the whole carve is only 2-3.7x faster, because both methods spend the same time recomputing the Sobel energy map and removing the seam after every step. Those steps, not the seam search, are what dominate the greedy run.
 
 ## Graph Cut vs Dynamic Programming
 
