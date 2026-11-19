@@ -172,22 +172,22 @@ def breakdown_chart(rows, path, image_name, size_text, seam_count):
     figure, axes = new_axes(
         plt, "Where the time goes when removing one seam",
         f"{image_name} {size_text}, average over {seam_count} seams. Grey steps are the same for every method.",
-        (8, 3.2))
+        (8, 3.6))
     labels = [METHODS[r["method"]][1] for r in rows]
     for index, row in enumerate(rows):
         colour = METHODS[row["method"]][2]
         left = 0.0
         for step, fill, name in (("energy", SHARED_DARK, "Energy map (Sobel)"),
                                  ("removal", SHARED_LIGHT, "Seam removal"),
-                                 ("search", colour, "Seam search")):
+                                 ("search", colour, f"Seam search: {labels[index]}")):
             milliseconds = row[step] * 1e3
+            # grey steps get one legend entry; every method's search gets its own coloured entry
             axes.barh(index, milliseconds, left=left, height=0.5, color=fill, edgecolor="white", linewidth=2,
-                      label=name if index == 0 and step != "search" else None)
+                      label=name if index == 0 or step == "search" else None)
             left += milliseconds
         search_ms, total_ms = row["search"] * 1e3, left
         axes.text(total_ms, index, f"  {total_ms:.2f} ms total, search {search_ms:.3g} ms "
                   f"({search_ms / total_ms:.0%})", va="center", fontsize=9, color=INK)
-    axes.barh([-9], [0], color="#ffffff", edgecolor=MUTED, linewidth=0.8, label="Seam search (method colour)")
     axes.set_yticks(range(len(rows)))
     axes.set_yticklabels(labels, fontsize=10, color=INK)
     axes.set_ylim(len(rows) - 0.5, -0.5)
@@ -195,8 +195,9 @@ def breakdown_chart(rows, path, image_name, size_text, seam_count):
     axes.set_xlabel("milliseconds per seam", fontsize=9.5, color=MUTED)
     axes.grid(axis="x", color=GRID, linewidth=0.8)
     axes.set_axisbelow(True)
-    axes.legend(loc="lower right", frameon=False, fontsize=8.5, labelcolor=INK)
-    figure.subplots_adjust(left=0.11, right=0.97, top=0.76, bottom=0.2)
+    axes.legend(loc="upper center", bbox_to_anchor=(0.5, -0.24), ncol=4, frameon=False, fontsize=9,
+                labelcolor=INK)
+    figure.subplots_adjust(left=0.11, right=0.97, top=0.79, bottom=0.27)
     figure.savefig(path, facecolor="white")
     plt.close(figure)
 
