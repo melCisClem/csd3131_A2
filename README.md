@@ -317,4 +317,13 @@ usage:
 
 ## Team
 
-Group A2 - CSD3131 Assignment 2. Team members and SIT IDs to be added.
+CSD3131 Assignment 2, Team 09
+
+| Name | SIT ID |
+|---|---|
+| Lai Jun Jie Clement | 2403344 |
+| Seow Sin Le | 2401084 |
+| Pearly Lin Lee Ying | 2401591 |
+| Novelie Voon Jing Ying | 2402208 |
+| Tan Chee Qing | 2401486 |
+| Tan Jia Min | 2303206 |
