@@ -1,8 +1,10 @@
 """Greedy vs DP comparison (assignment item 3): seams, visual quality, running time.
 
-Usage: python -m seamcarving.compare castle.png --width 250 --height 180 [--out results/castle]
+Usage: python -m seamcarving.compare castle.png --width 250 --height 180 [--out results/castle_greedy]
+   or: python -m seamcarving castle.png out.png --width 250 --height 180 --greedy
+       (carves, saves out.png and writes this whole report to the same folder)
 
-Writes to the output folder:
+Writes to the output folder (default results/<image name>_greedy):
     first_seam.png       first vertical seam of each method on the image and on its energy map
                          (red = DP, cyan = greedy, white = both)
     all_seams_dp.png     original image with every seam DP removed (red = vertical, blue = horizontal)
@@ -11,6 +13,7 @@ Writes to the output folder:
     result_dp.png, result_greedy.png   the carved images
     seam_costs.png       energy of every removed seam, DP (red) vs greedy (cyan)
     seam_costs.csv       the same numbers, one row per seam
+    timing.csv, timing.png   time to find ONE seam at several image sizes (see TIMING_SCALES)
     summary.md           timing and seam-cost table (also printed)
 
 Seam cost = sum of the (backward) energy along the seam, i.e. what the DP
@@ -151,12 +154,88 @@ def cost_chart(dp_costs, greedy_costs, width=800, height=360, margin=50):
     return canvas
 
 
+# Image sizes for the one-seam timing table, as multiples of the input size.
+# Above 1 the image is enlarged so the growth of the DP time is easy to see.
+TIMING_SCALES = (0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0)
+
+
+def best_time(function, argument, repeats=5):
+    # Fastest of `repeats` runs (a single run of something this fast is mostly noise)
+    best = float("inf")
+    for _ in range(repeats):
+        t0 = time.perf_counter()
+        function(argument)
+        best = min(best, time.perf_counter() - t0)
+    return best
+
+
+def timing_rows(img, scales=TIMING_SCALES):
+    # Time to find ONE vertical seam with each method at each size
+    rows = []
+    for scale in scales:
+        if scale == 1:
+            sized = img
+        else:
+            interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+            sized = cv2.resize(img, None, fx=scale, fy=scale, interpolation=interpolation)
+        energy = compute_energy(sized)
+        height, width = energy.shape
+        print(f"timing one seam at {width}x{height} ...", flush=True)
+        rows.append({
+            "width": width, "height": height, "pixels": width * height,
+            "dp_seconds": best_time(backward.find_vertical_seam, energy),
+            "greedy_seconds": best_time(greedy.find_vertical_seam, energy),
+            "dp_cost": seam_cost(energy, backward.find_vertical_seam(energy)),
+            "greedy_cost": seam_cost(energy, greedy.find_vertical_seam(energy)),
+        })
+    return rows
+
+
+def timing_chart(rows, width=800, height=380, margin=60):
+    # Pixels (x) vs seconds for one seam (y, log scale): DP red, greedy cyan
+    canvas = np.full((height, width, 3), 255, dtype=np.uint8)
+    times = [r[k] for r in rows for k in ("dp_seconds", "greedy_seconds")]
+    low, high = np.log10(max(min(times), 1e-7)) - 0.3, np.log10(max(times)) + 0.3
+    most_pixels = max(r["pixels"] for r in rows) * 1.05
+
+    def point(pixels, seconds):
+        x = margin + pixels / most_pixels * (width - 2 * margin)
+        y = height - margin - (np.log10(max(seconds, 1e-7)) - low) / (high - low) * (height - 2 * margin)
+        return int(x), int(y)
+
+    text = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.line(canvas, (margin, height - margin), (width - margin, height - margin), (0, 0, 0), 1)
+    cv2.line(canvas, (margin, margin), (margin, height - margin), (0, 0, 0), 1)
+    for power in range(int(np.ceil(low)), int(np.floor(high)) + 1):   # one grid line per power of 10
+        _, y = point(0, 10.0 ** power)
+        cv2.line(canvas, (margin, y), (width - margin, y), (225, 225, 225), 1)
+        cv2.putText(canvas, f"1e{power}s", (5, y + 4), text, 0.4, (0, 0, 0), 1, cv2.LINE_AA)
+
+    for key, colour in (("dp_seconds", RED), ("greedy_seconds", (200, 160, 0))):
+        points = np.array([point(r["pixels"], r[key]) for r in rows], dtype=np.int32)
+        cv2.polylines(canvas, [points], False, colour, 2, cv2.LINE_AA)
+        for p in points:
+            cv2.circle(canvas, tuple(int(v) for v in p), 3, colour, -1, cv2.LINE_AA)
+
+    cv2.putText(canvas, "time to find one seam (log scale)", (margin, 30), text, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
+    cv2.putText(canvas, "DP", (width - margin - 110, 30), text, 0.6, RED, 2, cv2.LINE_AA)
+    cv2.putText(canvas, "greedy", (width - margin - 70, 30), text, 0.6, (200, 160, 0), 2, cv2.LINE_AA)
+    cv2.putText(canvas, f"pixels (0 .. {max(r['pixels'] for r in rows)})", (width // 2 - 70, height - 15),
+                text, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+    return canvas
+
+
+def default_out_dir(input_path):
+    # results/<image name>_greedy, e.g. results/castle_greedy
+    return os.path.join("results", os.path.splitext(os.path.basename(input_path))[0] + "_greedy")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Compare greedy and DP seam carving")
     ap.add_argument("input")
     ap.add_argument("--width", type=int, help="target width (default: unchanged)")
     ap.add_argument("--height", type=int, help="target height (default: unchanged)")
-    ap.add_argument("--out", help="output folder (default: results/<image name>)")
+    ap.add_argument("--out", help="output folder (default: results/<image name>_greedy)")
     args = ap.parse_args()
 
     img = cv2.imread(args.input)
@@ -166,7 +245,16 @@ def main() -> int:
     H, W = img.shape[:2]
     w = W if args.width is None else args.width
     h = H if args.height is None else args.height
-    out_dir = args.out or os.path.join("results", os.path.splitext(os.path.basename(args.input))[0])
+    if not (1 <= w <= W and 1 <= h <= H):
+        print(f"error: target {w}x{h} must be between 1x1 and {W}x{H}", file=sys.stderr)
+        return 1
+    write_report(args.input, img, w, h, args.out or default_out_dir(args.input))
+    return 0
+
+
+def write_report(input_path, img, w, h, out_dir):
+    # Everything listed at the top of this file, written to out_dir
+    H, W = img.shape[:2]
     os.makedirs(out_dir, exist_ok=True)
 
     # First seam of each method on the original image
@@ -211,10 +299,18 @@ def main() -> int:
     if dp_costs:
         cv2.imwrite(os.path.join(out_dir, "seam_costs.png"), cost_chart(dp_costs, greedy_costs))
 
+    # One-seam timing at several sizes
+    rows = timing_rows(img)
+    with open(os.path.join(out_dir, "timing.csv"), "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    cv2.imwrite(os.path.join(out_dir, "timing.png"), timing_chart(rows))
+
     # Summary
     dp_first, greedy_first = (seam_cost(energy, first[n]) for n in ("dp", "greedy"))
     lines = [
-        f"# Greedy vs DP: {os.path.basename(args.input)} {W}x{H} -> {w}x{h}",
+        f"# Greedy vs DP: {os.path.basename(input_path)} {W}x{H} -> {w}x{h}",
         "",
         "| | DP | Greedy |",
         "|---|---|---|",
@@ -234,13 +330,25 @@ def main() -> int:
         "(energy recomputation and seam removal are the same for both).",
     ] if dp_costs else ["no seams to remove"]
 
+    lines += [
+        "",
+        "## Time to find one seam",
+        "",
+        "| Image | Pixels | DP (s) | Greedy (s) | DP / greedy | DP seam cost | Greedy seam cost |",
+        "|---|---|---|---|---|---|---|",
+    ] + [
+        f"| {r['width']}x{r['height']} | {r['pixels']} | {r['dp_seconds']:.5f} | {r['greedy_seconds']:.5f} "
+        f"| {r['dp_seconds'] / max(r['greedy_seconds'], 1e-9):.1f}x "
+        f"| {r['dp_cost']:.0f} | {r['greedy_cost']:.0f} |"
+        for r in rows
+    ]
+
     summary = "\n".join(lines) + "\n"
     with open(os.path.join(out_dir, "summary.md"), "w") as f:
         f.write(summary)
 
     print(summary)
     print(f"images written to {out_dir}")
-    return 0
 
 
 if __name__ == "__main__":
